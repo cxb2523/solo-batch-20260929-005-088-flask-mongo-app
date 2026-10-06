@@ -1,7 +1,7 @@
 # MODULE IMPORTS
 
 # Flask modules
-from flask import Flask, render_template, request, url_for, request, redirect, abort
+from flask import Flask, render_template, request, url_for, request, redirect, abort, jsonify
 from flask_login import LoginManager, login_user, logout_user, login_required, current_user
 from flask_talisman import Talisman
 from flask_pymongo import PyMongo
@@ -13,6 +13,8 @@ from urllib.parse import urlparse, urljoin
 from datetime import datetime
 import configparser
 import json
+import math
+import re
 import sys
 import os
 
@@ -33,7 +35,8 @@ config.read('configuration.ini')
 default = config['DEFAULT']
 app.secret_key = default['SECRET_KEY']
 app.config['MONGO_DBNAME'] = os.environ.get('MONGO_DBNAME')
-app.config['MONGO_URI'] = os.environ.get('MONGODB_URI') #default['MONGO_URI']
+app.config['MONGO_URI'] = os.environ.get('MONGODB_URI') \
+    or 'mongodb://localhost:27017/webapp' #default['MONGO_URI']
 app.config['PREFERRED_URL_SCHEME'] = "https"
 
 # Create Pymongo
@@ -194,6 +197,88 @@ def messages():
     return render_template('messages.html', users=all_users, inbox_messages=inbox_messages, sent_messages=sent_messages)
 
 
+# Notes (page + JSON query API)
+# Decisions:
+#   - Multiple tags are intersected (a note must carry ALL requested tags).
+#   - Keyword search uses an escaped regex (re.escape) over title/body, so
+#     regex metacharacters in q are always treated literally.
+#   - Filtering happens before pagination: total is the filtered count and
+#     skip/limit is applied to the filtered cursor only.
+NOTES_PER_PAGE_DEFAULT = 10
+NOTES_PER_PAGE_MAX = 50
+
+
+def _parse_positive_int(raw, default, maximum):
+    # Clamp out-of-range/invalid values into [1, maximum] instead of raising
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        value = default
+    return max(1, min(value, maximum))
+
+
+def _build_note_query(user_id, q, tags):
+    query = {"user_id": user_id, "deleted": False}
+    if q:
+        pattern = re.escape(q)
+        query["$or"] = [
+            {"title": {"$regex": pattern, "$options": "i"}},
+            {"body": {"$regex": pattern, "$options": "i"}},
+        ]
+    if tags:
+        query["tags"] = {"$all": tags}
+    return query
+
+
+def _serialize_note(note):
+    return {
+        "id": note.get("id"),
+        "title": note.get("title"),
+        "body": note.get("body"),
+        "tags": note.get("tags", []),
+        "date_string": note.get("date_string"),
+        "timestamp": note["timestamp"].isoformat() if note.get("timestamp") else None,
+    }
+
+
+@app.route('/notes', methods=['GET'])
+def notes():
+    if not current_user.is_authenticated:
+        return jsonify({"error": "Authentication required"}), 401
+
+    wants_json = (
+        request.args.get("format") == "json"
+        or request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or request.accept_mimetypes.best == "application/json"
+    )
+    if not wants_json:
+        return render_template('notes.html')
+
+    q = (request.args.get("q") or "").strip()
+    tags = [t.strip() for t in request.args.getlist("tag") if t.strip()]
+    per_page = _parse_positive_int(
+        request.args.get("per_page"), NOTES_PER_PAGE_DEFAULT, NOTES_PER_PAGE_MAX)
+
+    # Filter first, then paginate the filtered result set
+    query = _build_note_query(current_user.id, q, tags)
+    total = mongo.db.notes.count_documents(query)
+    pages = max(1, math.ceil(total / per_page))
+    page = _parse_positive_int(request.args.get("page"), 1, pages)
+
+    cursor = mongo.db.notes.find(query).sort("timestamp", -1) \
+        .skip((page - 1) * per_page).limit(per_page)
+
+    return jsonify({
+        "notes": [_serialize_note(n) for n in cursor],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "pages": pages,
+        "q": q,
+        "tags": tags,
+    })
+
+
 # Logout
 @app.route('/logout', methods=['GET'])
 @login_required
@@ -336,8 +421,9 @@ def is_safe_url(target):
 
 
 # Heroku environment
-if os.environ.get('APP_LOCATION') == 'heroku':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
-else:
-    app.run(host='localhost', port=8080, debug=True)
+if __name__ == '__main__':
+    if os.environ.get('APP_LOCATION') == 'heroku':
+        port = int(os.environ.get("PORT", 5000))
+        app.run(host="0.0.0.0", port=port)
+    else:
+        app.run(host='localhost', port=8080, debug=True)

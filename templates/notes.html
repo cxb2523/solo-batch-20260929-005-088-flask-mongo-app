@@ -1,0 +1,53 @@
+{% extends "layout.html" %}
+{% block body %}
+<div class="container">
+    <div class="row mb-5 pt-5">
+        <div class="col-lg-10 offset-lg-1">
+
+            <h1 class="mb-3">My notes</h1>
+
+            <div class="card border border-muted bg-light rounded mb-4">
+                <div class="card-body">
+                    <h2 class="h5 card-title">Filter notes</h2>
+                    <form id="notes-filter-form" class="form-inline">
+                        <label class="sr-only" for="notes-q">Keyword</label>
+                        <input type="text" class="form-control m-1" id="notes-q" name="q"
+                            placeholder="Keyword in title or text">
+
+                        <label class="sr-only" for="notes-tags">Tags</label>
+                        <input type="text" class="form-control m-1" id="notes-tags" name="tags"
+                            placeholder="Tags, comma separated (all must match)">
+
+                        <label class="sr-only" for="notes-per-page">Per page</label>
+                        <select class="form-control m-1" id="notes-per-page" name="per_page">
+                            <option value="5">5 per page</option>
+                            <option value="10" selected>10 per page</option>
+                            <option value="20">20 per page</option>
+                            <option value="50">50 per page</option>
+                        </select>
+                    </form>
+                </div>
+            </div>
+
+            <p id="notes-summary" class="text-muted"></p>
+
+            <div id="notes-results"></div>
+
+            <nav aria-label="Notes pagination">
+                <ul class="pagination">
+                    <li class="page-item" id="notes-prev-item">
+                        <button class="page-link" id="notes-prev" type="button">Previous</button>
+                    </li>
+                    <li class="page-item disabled">
+                        <span class="page-link" id="notes-page-info"></span>
+                    </li>
+                    <li class="page-item" id="notes-next-item">
+                        <button class="page-link" id="notes-next" type="button">Next</button>
+                    </li>
+                </ul>
+            </nav>
+
+        </div>
+    </div>
+</div>
+{% endblock %}

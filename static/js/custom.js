@@ -154,4 +154,100 @@ $(document).ready(function() {
         $("button.first-delete").html("Hide the red button!");
     });
 
+
+    // Notes page: debounced filter + stale-response guard
+    if ($("#notes-filter-form").length) {
+        var notesState = {
+            page: 1,
+            debounceTimer: null,
+            // Monotonic request sequence: only the latest request may render,
+            // so a slow earlier response can never overwrite newer results.
+            requestSeq: 0
+        };
+
+        function notesParams() {
+            var params = { format: "json", page: notesState.page, per_page: $("#notes-per-page").val() };
+            var q = $("#notes-q").val().trim();
+            if (q) {
+                params.q = q;
+            }
+            // Tags are intersected server-side: send one repeated param per tag
+            var tags = $("#notes-tags").val().split(",")
+                .map(function(t) { return t.trim(); })
+                .filter(function(t) { return t.length > 0; });
+            if (tags.length) {
+                params.tag = tags;
+            }
+            return params;
+        }
+
+        function renderNotes(data) {
+            var $results = $("#notes-results").empty();
+            if (!data.notes.length) {
+                $results.append($("<p>").text("No notes match your filters."));
+            }
+            data.notes.forEach(function(note) {
+                var $card = $("<div>", { "class": "card border border-muted bg-light rounded mb-3" });
+                var $body = $("<div>", { "class": "card-body" });
+                $body.append($("<h3>", { "class": "card-title" }).text(note.title));
+                $body.append($("<p>", { "class": "card-text" }).text(note.body));
+                if (note.tags && note.tags.length) {
+                    $body.append($("<p>", { "class": "card-text text-muted" })
+                        .text("Tags: " + note.tags.join(", ")));
+                }
+                $card.append($body);
+                $card.append($("<div>", { "class": "card-footer bg-light" })
+                    .append($("<p>", { "class": "my-auto text-muted" }).text(note.date_string || "")));
+                $results.append($card);
+            });
+            $("#notes-summary").text(data.total + " note(s) match the current filters.");
+            $("#notes-page-info").text("Page " + data.page + " of " + data.pages);
+            $("#notes-prev-item").toggleClass("disabled", data.page <= 1);
+            $("#notes-next-item").toggleClass("disabled", data.page >= data.pages);
+        }
+
+        function fetchNotes() {
+            notesState.requestSeq += 1;
+            var seq = notesState.requestSeq;
+            $.getJSON("/notes", notesParams())
+                .done(function(data) {
+                    if (seq !== notesState.requestSeq) {
+                        // Stale response: a newer request is in flight or done
+                        return;
+                    }
+                    notesState.page = data.page;
+                    renderNotes(data);
+                })
+                .fail(function(response) {
+                    if (seq !== notesState.requestSeq) {
+                        return;
+                    }
+                    console.log(response);
+                });
+        }
+
+        function scheduleFetch(resetPage) {
+            if (resetPage) {
+                notesState.page = 1;
+            }
+            clearTimeout(notesState.debounceTimer);
+            notesState.debounceTimer = setTimeout(fetchNotes, 300);
+        }
+
+        $("#notes-q, #notes-tags").on("input", function() { scheduleFetch(true); });
+        $("#notes-per-page").on("change", function() { scheduleFetch(true); });
+        $("#notes-prev").click(function() {
+            if (notesState.page > 1) {
+                notesState.page -= 1;
+                fetchNotes();
+            }
+        });
+        $("#notes-next").click(function() {
+            notesState.page += 1;
+            fetchNotes();
+        });
+
+        fetchNotes();
+    }
+
 });
